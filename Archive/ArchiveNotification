@@ -1,0 +1,141 @@
+using System.Collections;
+using TMPro;
+using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
+
+public class ArchiveNotification : MonoBehaviour
+{
+    [SerializeField] private Button button;
+
+    [Header("Menu yang dibuka saat notif ditekan")]
+    [Tooltip("Kosongkan saja, otomatis dicari di PersistentUICanvas yang sama.")]
+    [SerializeField] private FieldDeviceMenu menu;
+
+    [Header("Teks")]
+    [Tooltip("Kosongkan saja, otomatis dicari dari anak objek ini.")]
+    [SerializeField] private TMP_Text label;
+    [SerializeField] private string message = "NEW ARCHIVE ADDED";
+
+    [Header("Ukuran & Posisi")]
+    [SerializeField] private Vector2 size = new Vector2(420f, 80f);
+    [SerializeField] private float shownX = -40f;       // jarak dari tepi kanan saat tampil
+    [SerializeField] private float yOffset = -40f;      // jarak dari tepi atas
+    [SerializeField] private float hiddenExtra = 40f;   // tambahan jarak saat sembunyi di luar layar
+
+    [Header("Animasi")]
+    [SerializeField] private float slideDuration = 0.35f;
+    [SerializeField] private float displayDuration = 4f;
+
+    [Header("Event tambahan (opsional)")]
+    public UnityEvent onClicked;
+
+    private RectTransform rt;
+    private Coroutine routine;
+
+    private float HiddenX => size.x + hiddenExtra;
+
+    private void Awake()
+    {
+        rt = (RectTransform)transform;
+
+        // Paksa anchor & pivot ke pojok kanan atas supaya animasi geser konsisten
+        rt.anchorMin = new Vector2(1f, 1f);
+        rt.anchorMax = new Vector2(1f, 1f);
+        rt.pivot = new Vector2(1f, 1f);
+        rt.sizeDelta = size;
+
+        // Isi teks lewat script
+        if (label == null) label = GetComponentInChildren<TMP_Text>(true);
+        if (label != null && !string.IsNullOrEmpty(message))
+            label.text = message;
+
+        if (button == null) button = GetComponent<Button>();
+        if (button != null) button.onClick.AddListener(OnClick);
+
+        SetX(HiddenX);
+    }
+
+    private void OnEnable()
+    {
+        ArchiveManager.OnEntryAdded += HandleEntryAdded;
+    }
+
+    private void OnDisable()
+    {
+        ArchiveManager.OnEntryAdded -= HandleEntryAdded;
+    }
+
+    private void HandleEntryAdded(ArchiveEntry entry)
+    {
+        Show();
+    }
+
+    public void Show()
+    {
+        if (routine != null) StopCoroutine(routine);
+        routine = StartCoroutine(ShowRoutine());
+    }
+
+    [ContextMenu("Test Show")]
+    private void TestShow()
+    {
+        Show();
+    }
+
+    private IEnumerator ShowRoutine()
+    {
+        yield return Slide(rt.anchoredPosition.x, shownX);      // geser masuk ke kiri
+        yield return new WaitForSecondsRealtime(displayDuration);
+        yield return Slide(rt.anchoredPosition.x, HiddenX);     // geser keluar ke kanan
+        routine = null;
+    }
+
+    private IEnumerator Slide(float from, float to)
+    {
+        float t = 0f;
+        while (t < slideDuration)
+        {
+            t += Time.unscaledDeltaTime;
+            SetX(Mathf.Lerp(from, to, Mathf.SmoothStep(0f, 1f, t / slideDuration)));
+            yield return null;
+        }
+        SetX(to);
+    }
+
+    private void OnClick()
+    {
+        if (routine != null) StopCoroutine(routine);
+        routine = null;
+
+        SetX(HiddenX); // langsung sembunyi
+
+        // Cari FieldDeviceMenu kalau belum ada referensinya
+        if (menu == null)
+        {
+            Canvas canvas = GetComponentInParent<Canvas>();
+            if (canvas != null)
+                menu = canvas.GetComponentInChildren<FieldDeviceMenu>(true);
+
+            if (menu == null)
+                menu = FindFirstObjectByType<FieldDeviceMenu>(FindObjectsInactive.Include);
+        }
+
+        if (menu != null)
+        {
+            Debug.Log("[ArchiveNotification] diklik, membuka halaman Archive.");
+            menu.OpenArchivePage();
+        }
+        else
+        {
+            Debug.LogWarning("[ArchiveNotification] diklik, tapi FieldDeviceMenu tidak ditemukan di scene.");
+        }
+
+        onClicked?.Invoke();
+    }
+
+    private void SetX(float x)
+    {
+        rt.anchoredPosition = new Vector2(x, yOffset);
+    }
+}
