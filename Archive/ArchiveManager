@@ -1,0 +1,107 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+[Serializable]
+public class ArchiveEntry
+{
+    public string id;
+    public string title;
+    public string body;
+    public bool isRead;
+}
+
+public static class ArchiveManager
+{
+    private const string SaveKey = "Archive_Entries";
+
+    [Serializable]
+    public class SaveData
+    {
+        public List<ArchiveEntry> entries = new List<ArchiveEntry>();
+    }
+
+    private static SaveData data;
+
+    /// <summary>Dipanggil saat ada catatan baru yang perlu diberi notifikasi.</summary>
+    public static event Action<ArchiveEntry> OnEntryAdded;
+
+    public static IReadOnlyList<ArchiveEntry> Entries
+    {
+        get { Load(); return data.entries; }
+    }
+
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.SubsystemRegistration)]
+    private static void ResetStatics()
+    {
+        data = null;
+        OnEntryAdded = null;
+    }
+
+    public static void ResetCache()
+    {
+        data = null;
+    }
+
+    private static void Load()
+    {
+        if (data != null) return;
+
+        string json = SlotStore.GetString(SaveKey, "");
+        data = string.IsNullOrEmpty(json) ? new SaveData() : JsonUtility.FromJson<SaveData>(json);
+
+        if (data == null || data.entries == null)
+            data = new SaveData();
+    }
+
+    private static void Save()
+    {
+        SlotStore.SetString(SaveKey, JsonUtility.ToJson(data));
+        SlotStore.Save();
+    }
+
+    public static bool Has(string id)
+    {
+        Load();
+        return data.entries.Exists(e => e.id == id);
+    }
+
+    /// <summary>
+    /// Return true kalau catatan baru (belum pernah ada), false kalau sudah ada.
+    /// notify = false: catatan tetap tersimpan di Archive, tapi tanpa notifikasi.
+    /// </summary>
+    public static bool AddEntry(string id, string title, string body, bool notify = true)
+    {
+        Load();
+        if (Has(id)) return false;
+
+        var entry = new ArchiveEntry { id = id, title = title, body = body, isRead = false };
+        data.entries.Add(entry);
+        Save();
+
+        if (notify)
+            OnEntryAdded?.Invoke(entry);
+
+        return true;
+    }
+
+    public static void MarkRead(string id)
+    {
+        Load();
+        ArchiveEntry entry = data.entries.Find(e => e.id == id);
+        if (entry == null || entry.isRead) return;
+
+        entry.isRead = true;
+        Save();
+    }
+
+#if UNITY_EDITOR
+    [UnityEditor.MenuItem("Tools/Archive/Reset Archive")]
+    private static void EditorReset()
+    {
+        SlotStore.DeleteKey(SaveKey);
+        data = null;
+        Debug.Log("Archive direset.");
+    }
+#endif
+}
