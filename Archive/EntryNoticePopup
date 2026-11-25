@@ -1,0 +1,289 @@
+using System.Collections;
+using System.Text;
+using TMPro;
+using UnityEngine;
+using UnityEngine.Events;
+using UnityEngine.UI;
+
+public class EntryNoticePopup : MonoBehaviour
+{
+    [System.Serializable]
+    public class Line
+    {
+        public TMP_Text text;
+        [TextArea] public string content;
+    }
+
+    [Header("UI")]
+    [SerializeField] private CanvasGroup panel;   // panel utama log
+    [SerializeField] private Button closeArea;    // CloseArea
+    [Tooltip("Opsional: tombol di NoticeBox (bagian tengah). Kalau diisi, klik di catatan juga menutup log.")]
+    [SerializeField] private Button closeOnBoxClick;
+    [SerializeField] private Line[] lines;
+
+    [Header("Mode")]
+    [Tooltip("ON = muncul otomatis saat scene mulai. OFF = muncul lewat Open() dari event On Interact.")]
+    [SerializeField] private bool autoOpenOnStart = true;
+
+    [Header("Timing")]
+    [SerializeField] private float showDelay = 1.5f;   // cuma dipakai mode otomatis
+    [SerializeField] private float fadeDuration = 0.5f;
+    [SerializeField] private float charDelay = 0.03f;
+    [SerializeField] private float lineDelay = 0.4f;
+    [SerializeField] private bool closeOnlyAfterTyping = false;
+
+    [Header("Muncul Sekali Saja (mode otomatis)")]
+    [SerializeField] private string saveKey = "Seen_OutsideGate_EntryNotice";
+    [SerializeField] private bool showEveryTime = false;
+
+    [Header("Archive")]
+    [Tooltip("ID unik per catatan, JANGAN sama antar scene. Kosongkan kalau tidak mau masuk Archive.")]
+    [SerializeField] private string archiveId;
+    [Tooltip("Judul yang tampil di daftar Archive (sisi kiri).")]
+    [SerializeField] private string archiveTitle;
+    [Tooltip("Jeda setelah log menutup sebelum didaftarkan ke Archive.")]
+    [SerializeField] private float archiveNotifyDelay = 0.4f;
+    [Tooltip("Catatan otomatis TIDAK memunculkan notifikasi (tapi tetap masuk Archive). Nyalakan kalau mau notifnya muncul juga.")]
+    [SerializeField] private bool notifyWhenAutoOpened = false;
+
+    [Header("Event")]
+    [Tooltip("Dipanggil setelah log ditutup (dan sudah didaftarkan ke Archive).")]
+    public UnityEvent onClosed;
+
+    private bool inUse;
+    private bool isOpen;
+    private bool isTyping;
+    private bool isClosing;
+
+    private PlayerHealth playerHealth;
+    private PlayerController playerController;
+    private Rigidbody2D playerRb;
+    private Animator playerAnimator;
+
+    private void Awake()
+    {
+        closeArea.onClick.AddListener(Close);
+    }
+
+    private void Start()
+    {
+        // Sembunyikan panel di awal
+        panel.alpha = 0f;
+        panel.blocksRaycasts = false;
+        panel.interactable = false;
+        panel.gameObject.SetActive(false);
+
+        if (!autoOpenOnStart)
+        {
+            Debug.Log($"[EntryNotice] '{name}': mode interact (Auto Open On Start mati).");
+            return;
+        }
+
+        if (!showEveryTime && SlotStore.GetInt(saveKey, 0) == 1)
+        {
+            Debug.Log($"[EntryNotice] '{name}': dilewati, flag '{saveKey}' sudah tersimpan.");
+            return;
+        }
+
+        Debug.Log($"[EntryNotice] '{name}': otomatis muncul {showDelay} detik lagi.");
+        inUse = true;
+        StartCoroutine(ShowSequence(showDelay, true));
+    }
+
+    private void Update()
+    {
+        if (!isOpen || isClosing) return;
+
+        var mouse = UnityEngine.InputSystem.Mouse.current;
+        if (mouse == null || !mouse.leftButton.wasPressedThisFrame) return;
+
+        if (isTyping) SkipTyping();   // klik pertama: tampilkan semua teks
+        else Close();                 // klik berikutnya: tutup
+    }
+
+    private void SkipTyping()
+    {
+        StopAllCoroutines();          // menghentikan ShowSequence (efek ketik)
+        foreach (var line in lines)
+            line.text.maxVisibleCharacters = int.MaxValue;
+        isTyping = false;
+    }
+
+    /// <summary>
+    /// Dipanggil dari event On Interact (Interaction Prompt).
+    /// </summary>
+    public void Open()
+    {
+        if (inUse) return; // cegah kebuka dobel
+        inUse = true;
+        StartCoroutine(ShowSequence(0f, false));
+    }
+
+    private IEnumerator ShowSequence(float delay, bool waitForIntro)
+    {
+        // Mode otomatis: tunggu dulu kalau ada judul / pembukaan yang sedang tampil
+        if (waitForIntro)
+        {
+            yield return null; // tunggu 1 frame supaya semua judul sempat mulai
+            while (IntroState.Busy > 0)
+                yield return null;
+        }
+
+        if (delay > 0f)
+            yield return new WaitForSecondsRealtime(delay);
+
+        panel.gameObject.SetActive(true);
+        panel.alpha = 0f;
+
+        // Reset teks tiap kali dibuka
+        foreach (var line in lines)
+        {
+            line.text.text = line.content;
+            line.text.maxVisibleCharacters = 0;
+        }
+
+        FreezePlayer();
+        GameplayInputBlocker.SetDialogue(true);
+        isOpen = true;
+        panel.blocksRaycasts = true;
+        panel.interactable = true;
+
+        yield return Fade(0f, 1f);
+
+        isTyping = true;
+        foreach (var line in lines)
+        {
+            line.text.ForceMeshUpdate();
+            int total = line.text.textInfo.characterCount; // tag rich text tidak dihitung
+
+            for (int i = 1; i <= total; i++)
+            {
+                line.text.maxVisibleCharacters = i;
+                yield return new WaitForSecondsRealtime(charDelay);
+            }
+
+            yield return new WaitForSecondsRealtime(lineDelay);
+        }
+        isTyping = false;
+    }
+
+    private void Close()
+    {
+        if (!isOpen || isClosing) return;
+        if (isTyping && closeOnlyAfterTyping) return;
+
+        isClosing = true;
+        StopAllCoroutines();
+        StartCoroutine(CloseRoutine());
+    }
+
+    private IEnumerator CloseRoutine()
+    {
+        panel.interactable = false;
+        panel.blocksRaycasts = false;
+
+        yield return Fade(panel.alpha, 0f);
+
+        // Flag "sudah pernah muncul" cuma disimpan di mode otomatis
+        if (autoOpenOnStart)
+        {
+            SlotStore.SetInt(saveKey, 1);
+            SlotStore.Save();
+        }
+
+        UnfreezePlayer();
+        GameplayInputBlocker.SetDialogue(false);
+        panel.gameObject.SetActive(false);
+
+        // Daftarkan ke Archive
+        if (string.IsNullOrEmpty(archiveId))
+        {
+            Debug.LogWarning($"[Archive] '{name}': Archive Id kosong, catatan tidak didaftarkan.");
+        }
+        else
+        {
+            if (archiveNotifyDelay > 0f)
+                yield return new WaitForSecondsRealtime(archiveNotifyDelay);
+
+            RegisterToArchive();
+        }
+
+        isOpen = false;
+        isTyping = false;
+        isClosing = false;
+        inUse = false;
+
+        onClosed?.Invoke();
+    }
+    private void OnDestroy()
+    {
+        if (isOpen) GameplayInputBlocker.SetDialogue(false);
+    }
+
+    private void RegisterToArchive()
+    {
+        // Isi catatan = semua baris digabung, persis seperti yang tampil di popup
+        var sb = new StringBuilder();
+        for (int i = 0; i < lines.Length; i++)
+        {
+            if (i > 0) sb.Append("\n\n");
+            sb.Append(lines[i].content);
+        }
+
+        string title = string.IsNullOrEmpty(archiveTitle) ? archiveId : archiveTitle;
+
+        // Catatan otomatis (muncul sendiri saat scene mulai) tidak memunculkan notifikasi
+        bool notify = !autoOpenOnStart || notifyWhenAutoOpened;
+
+        bool added = ArchiveManager.AddEntry(archiveId, title, sb.ToString(), notify);
+        Debug.Log($"[Archive] '{archiveId}' baru? {added} (notifikasi: {notify})");
+    }
+
+    private IEnumerator Fade(float from, float to)
+    {
+        float t = 0f;
+        while (t < fadeDuration)
+        {
+            t += Time.unscaledDeltaTime;
+            panel.alpha = Mathf.Lerp(from, to, t / fadeDuration);
+            yield return null;
+        }
+        panel.alpha = to;
+    }
+
+    private void FreezePlayer()
+    {
+        playerHealth = FindFirstObjectByType<PlayerHealth>();
+        if (playerHealth == null) return;
+
+        playerController = playerHealth.GetComponent<PlayerController>();
+        playerRb = playerHealth.GetComponent<Rigidbody2D>();
+        playerAnimator = playerHealth.GetComponent<Animator>();
+
+        playerHealth.SetRunning(false);
+
+        if (playerController != null) playerController.enabled = false;
+
+        if (playerRb != null)
+            playerRb.linearVelocity = new Vector2(0f, playerRb.linearVelocity.y);
+
+        if (playerAnimator != null)
+        {
+            playerAnimator.SetBool("IsRunning", false);
+            playerAnimator.SetFloat("Speed", 0f);
+        }
+    }
+
+    private void UnfreezePlayer()
+    {
+        if (playerController != null && playerHealth != null && !playerHealth.IsDead)
+            playerController.enabled = true;
+    }
+
+    [ContextMenu("Reset Seen Flag")]
+    private void ResetSeenFlag()
+    {
+        SlotStore.DeleteKey(saveKey);
+        Debug.Log("Entry notice flag direset.");
+    }
+}
