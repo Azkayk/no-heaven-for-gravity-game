@@ -1,0 +1,91 @@
+using System.Collections.Generic;
+using TMPro;
+using UnityEngine;
+using UnityEngine.UI;
+
+public class ArchivePageUI : MonoBehaviour
+{
+    [Header("Daftar (kiri)")]
+    [SerializeField] private ScrollRect listScroll;
+    [SerializeField] private ArchiveListItem itemPrefab;
+
+    [Header("Isi catatan (kanan)")]
+    [SerializeField] private ScrollRect bodyScroll;
+    [SerializeField] private TMP_Text bodyText;
+
+    [Header("Opsional")]
+    [SerializeField] private GameObject emptyLabel;
+    [Tooltip("ON = saat Archive dibuka, catatan pertama langsung terpilih.")]
+    [SerializeField] private bool selectFirstOnOpen = true;
+
+    private readonly List<ArchiveListItem> items = new List<ArchiveListItem>();
+    private ArchiveListItem selected;
+
+    private void OnEnable()
+    {
+        ArchiveManager.OnEntryAdded += HandleEntryAdded;
+        Rebuild();
+    }
+
+    private void OnDisable()
+    {
+        ArchiveManager.OnEntryAdded -= HandleEntryAdded;
+    }
+
+    private void Rebuild()
+    {
+        foreach (var item in items)
+        {
+            if (item == null) continue;
+            item.gameObject.SetActive(false);
+            Destroy(item.gameObject);
+        }
+        items.Clear();
+        selected = null;
+        bodyText.text = "";
+
+        foreach (var entry in ArchiveManager.Entries)
+            CreateItem(entry);
+
+        RefreshLayout();
+
+        // Otomatis pilih catatan pertama
+        if (selectFirstOnOpen && items.Count > 0)
+            Select(items[0]);
+    }
+
+    private void HandleEntryAdded(ArchiveEntry entry)
+    {
+        CreateItem(entry);
+        RefreshLayout();
+    }
+
+    private void CreateItem(ArchiveEntry entry)
+    {
+        ArchiveListItem item = Instantiate(itemPrefab, listScroll.content);
+        item.Setup(entry, Select);
+        items.Add(item);
+    }
+
+    private void Select(ArchiveListItem item)
+    {
+        if (selected == item) return;
+        if (selected != null) selected.SetSelected(false);
+
+        selected = item;
+        ArchiveManager.MarkRead(item.Entry.id);
+        item.SetSelected(true);
+
+        bodyText.text = item.Entry.body;
+        LayoutRebuilder.ForceRebuildLayoutImmediate(bodyScroll.content);
+        bodyScroll.verticalNormalizedPosition = 1f; // balik ke atas
+    }
+
+    private void RefreshLayout()
+    {
+        if (emptyLabel != null) emptyLabel.SetActive(items.Count == 0);
+
+        LayoutRebuilder.ForceRebuildLayoutImmediate(listScroll.content);
+        listScroll.verticalNormalizedPosition = 1f;
+    }
+}
