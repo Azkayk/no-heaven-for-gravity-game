@@ -1,0 +1,149 @@
+using System.Collections;
+using UnityEngine;
+using UnityEngine.UI;
+
+[RequireComponent(typeof(Image))]
+public class HologramPanelFx : MonoBehaviour
+{
+    [Header("Warna")]
+    [SerializeField] private Color baseColor = new Color(0.05f, 0.35f, 0.45f, 0.35f);
+    [SerializeField] private Color borderColor = new Color(0.3f, 0.95f, 1f, 0.9f);
+    [SerializeField] private float borderThickness = 3f;
+
+    [Header("Animasi buka")]
+    [SerializeField] private float openDuration = 0.4f;
+    [SerializeField] private float lineHeight = 4f;       // tebal garis di awal (piksel)
+    [SerializeField] private float flickerAmount = 0.25f; // kedipan singkat di awal
+
+    [Header("Scanline")]
+    [SerializeField] private bool scanlines = true;
+    [SerializeField] private float scanSpacing = 8f;
+    [SerializeField] private float scanSpeed = 20f;
+    [SerializeField] private Color scanColor = new Color(0.4f, 1f, 1f, 0.06f);
+
+    private Image bg;
+    private RectTransform rt;
+    private RectTransform scanRoot;
+    private RectTransform[] scanLinesRt;
+    private Vector3 baseScale;
+    private bool built;
+
+    private void Awake()
+    {
+        bg = GetComponent<Image>();
+        rt = (RectTransform)transform;
+        baseScale = rt.localScale;
+        Build();
+    }
+
+    private void Build()
+    {
+        if (built) return;
+        built = true;
+
+        bg.sprite = null;
+        bg.color = baseColor;
+
+        // Garis tepi: 4 Image tipis
+        MakeBorder("Top", new Vector2(0, 1), new Vector2(1, 1), new Vector2(0, borderThickness));
+        MakeBorder("Bottom", new Vector2(0, 0), new Vector2(1, 0), new Vector2(0, borderThickness));
+        MakeBorder("Left", new Vector2(0, 0), new Vector2(0, 1), new Vector2(borderThickness, 0));
+        MakeBorder("Right", new Vector2(1, 0), new Vector2(1, 1), new Vector2(borderThickness, 0));
+
+        if (scanlines) BuildScanlines();
+    }
+
+    private void MakeBorder(string n, Vector2 aMin, Vector2 aMax, Vector2 size)
+    {
+        var go = new GameObject("Border_" + n, typeof(RectTransform), typeof(Image));
+        go.transform.SetParent(transform, false);
+        var img = go.GetComponent<Image>();
+        img.color = borderColor;
+        img.raycastTarget = false;
+
+        var r = (RectTransform)go.transform;
+        r.anchorMin = aMin;
+        r.anchorMax = aMax;
+        r.pivot = new Vector2((aMin.x + aMax.x) * 0.5f, (aMin.y + aMax.y) * 0.5f);
+        r.sizeDelta = size;
+        r.anchoredPosition = Vector2.zero;
+    }
+
+    private void BuildScanlines()
+    {
+        var root = new GameObject("Scanlines", typeof(RectTransform), typeof(RectMask2D));
+        root.transform.SetParent(transform, false);
+        scanRoot = (RectTransform)root.transform;
+        scanRoot.anchorMin = Vector2.zero;
+        scanRoot.anchorMax = Vector2.one;
+        scanRoot.offsetMin = scanRoot.offsetMax = Vector2.zero;
+        scanRoot.SetAsFirstSibling(); // di belakang teks
+
+        float h = Mathf.Max(100f, rt.rect.height);
+        int count = Mathf.CeilToInt(h / scanSpacing) + 2;
+        scanLinesRt = new RectTransform[count];
+
+        for (int i = 0; i < count; i++)
+        {
+            var go = new GameObject("L" + i, typeof(RectTransform), typeof(Image));
+            go.transform.SetParent(scanRoot, false);
+            var img = go.GetComponent<Image>();
+            img.color = scanColor;
+            img.raycastTarget = false;
+
+            var r = (RectTransform)go.transform;
+            r.anchorMin = new Vector2(0, 0);
+            r.anchorMax = new Vector2(1, 0);
+            r.pivot = new Vector2(0.5f, 0f);
+            r.sizeDelta = new Vector2(0, 1.5f);
+            scanLinesRt[i] = r;
+        }
+    }
+
+    private void OnEnable()
+    {
+        Build();
+        StopAllCoroutines();
+        StartCoroutine(OpenRoutine());
+    }
+
+    private void Update()
+    {
+        if (scanLinesRt == null) return;
+
+        float h = Mathf.Max(100f, rt.rect.height);
+        float offset = (Time.unscaledTime * scanSpeed) % scanSpacing;
+        for (int i = 0; i < scanLinesRt.Length; i++)
+        {
+            float y = i * scanSpacing + offset - scanSpacing;
+            scanLinesRt[i].anchoredPosition = new Vector2(0, y);
+            scanLinesRt[i].gameObject.SetActive(y >= 0f && y <= h);
+        }
+    }
+
+    private IEnumerator OpenRoutine()
+    {
+        float fullH = Mathf.Max(1f, rt.rect.height);
+        float startY = Mathf.Clamp(lineHeight / fullH, 0.001f, 1f);
+
+        float t = 0f;
+        while (t < openDuration)
+        {
+            t += Time.unscaledDeltaTime;
+            float k = Mathf.Clamp01(t / openDuration);
+            float eased = 1f - Mathf.Pow(1f - k, 3f);
+
+            float sy = Mathf.Lerp(startY, 1f, eased);
+            rt.localScale = new Vector3(baseScale.x, baseScale.y * sy, baseScale.z);
+
+            float flicker = k < 0.5f ? 1f - Random.value * flickerAmount : 1f;
+            Color c = baseColor; c.a *= flicker;
+            bg.color = c;
+
+            yield return null;
+        }
+
+        rt.localScale = baseScale;
+        bg.color = baseColor;
+    }
+}
