@@ -1,0 +1,49 @@
+using System.Collections;
+using UnityEngine;
+
+public class SceneFadeIn : MonoBehaviour
+{
+    [SerializeField] private CanvasGroup fadePanel;
+    [SerializeField] private float fadeDuration = 1f;
+
+    [Tooltip("Tetap hitam sebentar setelah scene aktif, supaya hitch awal (banyak Awake/Start) terjadi saat layar masih gelap.")]
+    [SerializeField] private float holdBlack = 0.25f;
+
+    void Start()
+    {
+        // Kalau SceneTransitionManager yang menangani fade in (pindah lewat pintu atau edge),
+        // panel ini tidak dipakai supaya tidak dobel dan tidak berkedip.
+        if (SceneTransitionManager.HandlingFadeIn)
+        {
+            fadePanel.alpha = 0f;
+            fadePanel.gameObject.SetActive(false);
+            return;
+        }
+
+        fadePanel.gameObject.SetActive(true); // pastikan panel kelihatan walau tersimpan nonaktif
+        fadePanel.alpha = 1f;
+        StartCoroutine(FadeIn());
+    }
+
+    IEnumerator FadeIn()
+    {
+        // Lewati beberapa frame supaya hitch awal scene lewat saat layar masih hitam
+        yield return null;
+        yield return null;
+
+        if (holdBlack > 0f)
+            yield return new WaitForSecondsRealtime(holdBlack);
+
+        float elapsed = 0f;
+        while (elapsed < fadeDuration)
+        {
+            // Waktu tanpa timeScale. Clamp supaya satu frame macet tidak melompati fade.
+            elapsed += Mathf.Min(Time.unscaledDeltaTime, 0.05f);
+            fadePanel.alpha = Mathf.SmoothStep(1f, 0f, elapsed / fadeDuration);
+            yield return null;
+        }
+
+        fadePanel.alpha = 0f;
+        fadePanel.gameObject.SetActive(false);
+    }
+}
