@@ -1,0 +1,161 @@
+using System.Collections;
+using UnityEngine;
+using UnityEngine.SceneManagement;
+
+public class MusicManager : MonoBehaviour
+{
+    public static MusicManager Instance { get; private set; }
+
+    [System.Serializable]
+    public class SceneMusic
+    {
+        [Tooltip("Nama scene PERSIS sama dengan nama file scene")]
+        public string sceneName;
+        public AudioClip clip;
+        [Range(0f, 1f)] public float volume = 0.7f;
+    }
+
+    [Header("Daftar Musik Per Scene")]
+    [SerializeField] private SceneMusic[] sceneMusics;
+
+    [Header("Fade")]
+    [SerializeField] private float fadeOutDuration = 1f;
+    [SerializeField] private float fadeInDuration = 1.5f;
+
+    [Header("Scene yang tidak ada di daftar")]
+    [Tooltip("ON = musik di-fade out jadi hening. OFF = musik sebelumnya lanjut.")]
+    [SerializeField] private bool silenceIfSceneNotListed = false;
+
+    private AudioSource source;
+    private AudioClip currentClip;
+    private Coroutine routine;
+
+    // Dibuat otomatis sebelum scene pertama load, jadi tetap jalan walau Play dari scene mana pun.
+    [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+    private static void Bootstrap()
+    {
+        if (Instance != null) return;
+
+        MusicManager prefab = Resources.Load<MusicManager>("MusicManager");
+        if (prefab == null)
+        {
+            Debug.LogWarning("[Music] Prefab 'MusicManager' tidak ditemukan di folder Resources.");
+            return;
+        }
+        Instantiate(prefab);
+    }
+
+    private void Awake()
+    {
+        if (Instance != null && Instance != this)
+        {
+            Destroy(gameObject);
+            return;
+        }
+        Instance = this;
+        DontDestroyOnLoad(gameObject);
+
+        source = gameObject.AddComponent<AudioSource>();
+        source.loop = true;
+        source.playOnAwake = false;
+        source.spatialBlend = 0f;
+        source.volume = 0f;
+
+        SceneManager.sceneLoaded += OnSceneLoaded;
+    }
+
+    private void Start()
+    {
+        PlayForScene(SceneManager.GetActiveScene().name);
+    }
+
+    private void OnDestroy()
+    {
+        if (Instance == this) SceneManager.sceneLoaded -= OnSceneLoaded;
+    }
+
+    private void OnSceneLoaded(Scene scene, LoadSceneMode mode)
+    {
+        if (mode != LoadSceneMode.Single) return;
+        PlayForScene(scene.name);
+    }
+
+    private void PlayForScene(string sceneName)
+    {
+        SceneMusic entry = FindEntry(sceneName);
+
+        if (entry == null || entry.clip == null)
+        {
+            if (silenceIfSceneNotListed) StartTransition(null, 0f);
+            return;
+        }
+
+        // Lagu yang sama sedang main: lanjut aja, nggak di-restart
+        if (entry.clip == currentClip && source.isPlaying)
+        {
+            StartTransition(entry.clip, entry.volume);
+            return;
+        }
+
+        StartTransition(entry.clip, entry.volume);
+    }
+
+    private SceneMusic FindEntry(string sceneName)
+    {
+        foreach (var m in sceneMusics)
+            if (m.sceneName == sceneName) return m;
+        return null;
+    }
+
+    private void StartTransition(AudioClip newClip, float targetVolume)
+    {
+        if (routine != null) StopCoroutine(routine);
+        routine = StartCoroutine(TransitionRoutine(newClip, targetVolume));
+    }
+
+    private IEnumerator TransitionRoutine(AudioClip newClip, float targetVolume)
+    {
+        bool sameClip = newClip == currentClip && source.isPlaying;
+
+        if (!sameClip)
+        {
+            // Fade out lagu lama
+            yield return FadeTo(0f, fadeOutDuration);
+            source.Stop();
+
+            currentClip = newClip;
+            if (newClip == null) { routine = null; yield break; }
+
+            source.clip = newClip;
+            source.volume = 0f;
+            source.Play();
+        }
+
+        // Fade in (atau sekadar sesuaikan volume kalau lagunya sama)
+        yield return FadeTo(targetVolume, fadeInDuration);
+        routine = null;
+    }
+
+    private IEnumerator FadeTo(float target, float duration)
+    {
+        float start = source.volume;
+        if (duration <= 0f) { source.volume = target; yield break; }
+
+        float t = 0f;
+        while (t < duration)
+        {
+            t += Time.unscaledDeltaTime; // tetap jalan walau game di-pause
+            source.volume = Mathf.Lerp(start, target, t / duration);
+            yield return null;
+        }
+        source.volume = target;
+    }
+
+    /// <summary>Opsional: fade out manual, misal dipanggil sebelum SceneManager.LoadScene.</summary>
+    public void FadeOut(float duration = -1f)
+    {
+        if (duration < 0f) duration = fadeOutDuration;
+        if (routine != null) StopCoroutine(routine);
+        routine = StartCoroutine(FadeTo(0f, duration));
+    }
+}
