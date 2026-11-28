@@ -1,0 +1,100 @@
+using System.Collections;
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.SceneManagement;
+
+public class BeginOperationSequence : MonoBehaviour
+{
+    [Header("References")]
+    [SerializeField] private Button targetButton;
+    [SerializeField] private Graphic[] blinkTargets; // isi: Btn_Play (Image) dan ButtonBackground (Image)
+    [SerializeField] private CanvasGroup fadePanel;
+    [SerializeField] private PulseFade pulse;
+
+    [Header("Timing")]
+    [SerializeField] private float blinkDuration = 1f;
+    [SerializeField] private float blinkSpeed = 6f;
+    [SerializeField] private float fadeDuration = 1f;
+
+    [Header("Scene")]
+    [SerializeField] private string gameplaySceneName = "Distrik1";
+
+    private bool sequenceRunning;
+    public bool IsRunning => sequenceRunning;
+
+    public void OnBeginOperationClicked()
+    {
+        if (sequenceRunning) return;
+        sequenceRunning = true;
+        StartCoroutine(PlaySequence());
+    }
+
+    IEnumerator PlaySequence()
+    {
+        if (targetButton != null)
+            targetButton.interactable = false;
+
+        if (pulse != null)
+            pulse.StopPulse();
+
+        yield return StartCoroutine(BlinkTargets());
+        yield return StartCoroutine(FadeOut());
+        yield return StartCoroutine(LoadGameplaySceneAsync());
+    }
+
+    IEnumerator BlinkTargets()
+    {
+        if (blinkTargets == null || blinkTargets.Length == 0) yield break;
+
+        // simpan alpha asli supaya dikembalikan persis setelah blink
+        float[] originalAlpha = new float[blinkTargets.Length];
+        for (int i = 0; i < blinkTargets.Length; i++)
+            if (blinkTargets[i] != null)
+                originalAlpha[i] = blinkTargets[i].color.a;
+
+        float elapsed = 0f;
+        while (elapsed < blinkDuration)
+        {
+            float alpha = Mathf.PingPong(elapsed * blinkSpeed, 1f);
+            for (int i = 0; i < blinkTargets.Length; i++)
+            {
+                if (blinkTargets[i] == null) continue;
+                Color c = blinkTargets[i].color;
+                c.a = alpha * originalAlpha[i];
+                blinkTargets[i].color = c;
+            }
+            elapsed += Time.deltaTime;
+            yield return null;
+        }
+
+        for (int i = 0; i < blinkTargets.Length; i++)
+        {
+            if (blinkTargets[i] == null) continue;
+            Color c = blinkTargets[i].color;
+            c.a = originalAlpha[i];
+            blinkTargets[i].color = c;
+        }
+    }
+
+    IEnumerator FadeOut()
+    {
+        fadePanel.gameObject.SetActive(true);
+        float elapsed = 0f;
+        while (elapsed < fadeDuration)
+        {
+            elapsed += Time.deltaTime;
+            fadePanel.alpha = Mathf.Lerp(0f, 1f, elapsed / fadeDuration);
+            yield return null;
+        }
+        fadePanel.alpha = 1f;
+    }
+
+    IEnumerator LoadGameplaySceneAsync()
+    {
+        AsyncOperation asyncLoad = SceneManager.LoadSceneAsync(gameplaySceneName);
+        asyncLoad.allowSceneActivation = true;
+
+        while (!asyncLoad.isDone)
+            yield return null;
+    }
+}
