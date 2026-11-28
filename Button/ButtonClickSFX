@@ -1,0 +1,20 @@
+using UnityEngine;
+using UnityEngine.UI;
+
+[RequireComponent(typeof(AudioSource))]
+public class ButtonClickSFX : MonoBehaviour
+{
+    [SerializeField] private AudioClip clickSound;
+    private AudioSource audioSource;
+
+    void Awake()
+    {
+        audioSource = GetComponent<AudioSource>();
+    }
+
+    public void PlayClickSound()
+    {
+        if (clickSound != null)
+            audioSource.PlayOneShot(clickSound);
+    }
+}
